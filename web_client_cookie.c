@@ -158,6 +158,7 @@ int main(int argc, char *argv[]) {
     enum {length, chunked, connection};
     int encoding = 0;
     int remaining = 0;
+	clock_t start_time;
 
 
 try_reconnect:
@@ -172,14 +173,16 @@ try_reconnect:
 
 	if (num_try++ % 2 == 0) {
 		send_request(server, hostname, port, path, 0, 0);
-		const clock_t start_time = clock();
+		start_time = clock();
 	}
 
     while(1) {
-        if ((clock() - start_time) / CLOCKS_PER_SEC > TIMEOUT) {
-            fprintf(stderr, "timeout after %.2f seconds\n", TIMEOUT);
-            return 1;
-        }
+		if (num_try++ % 2 == 0) {
+			if ((clock() - start_time) / CLOCKS_PER_SEC > TIMEOUT) {
+				fprintf(stderr, "timeout after %.2f seconds\n", TIMEOUT);
+				return 1;
+			}
+		}
         if (p == end) {
             fprintf(stderr, "out of buffer space\n");
             return 1;
