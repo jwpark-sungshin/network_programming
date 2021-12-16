@@ -177,7 +177,7 @@ try_reconnect:
 	}
 
     while(1) {
-		if (num_try++ % 2 == 0) {
+		if ((num_try-1) % 2 == 0) {
 			if ((clock() - start_time) / CLOCKS_PER_SEC > TIMEOUT) {
 				fprintf(stderr, "timeout after %.2f seconds\n", TIMEOUT);
 				return 1;
