@@ -10,6 +10,8 @@
 #include <string.h>
 #include <time.h>
 
+static int global_cookie_id = 1;
+
 const char *get_content_type(const char* path) {
     const char *last_dot = strrchr(path, '.');
     if (last_dot) {
@@ -28,7 +30,8 @@ const char *get_content_type(const char* path) {
         if (strcmp(last_dot, ".svg") == 0) return "image/svg+xml";
         if (strcmp(last_dot, ".txt") == 0) return "text/plain";
     }
-    return "application/octet-stream";
+    return "text/plain";
+    //return "application/octet-stream";
 }
 int create_socket(const char* host, const char *port) {
     printf("Configuring local address...\n");
@@ -65,6 +68,8 @@ int create_socket(const char* host, const char *port) {
 #define MAX_REQUEST_SIZE 2047
 
 struct client_info {
+	int remaining;
+	char *body;
     socklen_t address_length;
     struct sockaddr_storage address;
     int socket;
@@ -151,24 +156,28 @@ void send_404(struct client_info *client) {
 
     drop_client(client);
 }
-void serve_resource(struct client_info *client, const char *path) {
-    printf("serve_resource %s %s\n", get_client_address(client), path);
-    if (strcmp(path, "/") == 0) path = "/index.html";
-    if (strlen(path) > 100) {
-        send_400(client);
-        return;
-    }
-    if (strstr(path, "..")) {
-        send_404(client);
-        return;
-    }
+
+void store_resource(struct client_info *client) {
+
+}
+
+void serve_resource(struct client_info *client, int post, int cookie_id) {
+    printf("serve_resource %s %s\n", get_client_address(client), post? "POST":"GET");
     char full_path[128];
-    sprintf(full_path, "public%s", path);
-    FILE *fp = fopen(full_path, "rb");
+	if (!cookie_id)
+		cookie_id = global_cookie_id++;
+
+    sprintf(full_path, "cookies/%d", cookie_id);
+    FILE *fp = fopen(full_path, "ab+");
     if (!fp) {
         send_404(client);
         return;
     }
+
+	if (post) {
+		fwrite(client->body, client->remaining, 1, fp);
+	}
+
     fseek(fp, 0L, SEEK_END);
     size_t cl = ftell(fp);
     rewind(fp);
@@ -187,8 +196,12 @@ void serve_resource(struct client_info *client, const char *path) {
     sprintf(buffer, "Content-Type: %s\r\n", ct);
     send(client->socket, buffer, strlen(buffer), 0);
 
+	sprintf(buffer, "Set-Cookie: id=%d; Max-Age=86400\r\n", cookie_id); //
+    send(client->socket, buffer, strlen(buffer), 0); //
+
     sprintf(buffer, "\r\n");
     send(client->socket, buffer, strlen(buffer), 0);
+
     int r = fread(buffer, 1, BSIZE, fp);
     while (r) {
         send(client->socket, buffer, r, 0);
@@ -236,16 +249,37 @@ int main() {
                     char *q = strstr(client->request, "\r\n\r\n");
                     if (q) {
                         if (strncmp("GET /", client->request, 5)) {
-                            send_400(client);
+							if (strncmp("POST /", client->request, 6)) {
+								send_400(client);
+							} else {
+								client->body = q+4;
+								q = strstr(client->request, "\nContent-Length: ");
+								if (q) {
+									q = strchr(q, ' ');
+									q += 1;
+								}
+								client->remaining = strtol(q, 0, 10);
+
+								if (&client->request[client->received] - client->body >= client->remaining) {
+									int cookie_id = 0;
+									q = strstr(client->request, "\nCookie: id=");
+									if (q) {
+										q = strchr(q, '=');
+										q += 1;
+										cookie_id = strtol(q, 0, 10);	
+									}
+									serve_resource(client, 1, cookie_id);
+								}
+							}
                         } else {
-                            char *path = client->request + 4;
-                            char *end_path = strstr(path, " ");
-                            if (!end_path) {
-                                send_400(client);
-                            } else {
-                                *end_path = 0;
-                                serve_resource(client, path);
-                            }
+							int cookie_id = 0;
+							q = strstr(client->request, "\nCookie: id=");
+							if (q) {
+								q = strchr(q, '=');
+								q += 1;
+								cookie_id = strtol(q, 0, 10);	
+							}
+							serve_resource(client, 0, cookie_id);
                         }
                     } //if (q)
                 }
